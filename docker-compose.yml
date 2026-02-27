@@ -1,0 +1,69 @@
+services:
+  # -----------------------------------------------------------------------
+  # Model Setup: 下載權重 (如果不存在)
+  # -----------------------------------------------------------------------
+  model-setup:
+    image: alpine:latest
+    container_name: lama-triton-setup
+    volumes:
+      - ./models:/models
+    command: >
+      sh -c "
+      if [ ! -f /models/lama_pytorch/1/model.pt ]; then
+        echo 'Downloading LaMa weights...' &&
+        apk add --no-cache wget &&
+        mkdir -p /models/lama_pytorch/1 &&
+        wget -O /models/lama_pytorch/1/model.pt https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt;
+      else
+        echo 'LaMa weights already exist.';
+      fi
+      "
+
+  # -----------------------------------------------------------------------
+  # NVIDIA Triton Inference Server (推理引擎)
+  # -----------------------------------------------------------------------
+  triton-engine:
+    image: nvcr.io/nvidia/tritonserver:24.08-py3
+    container_name: lama-triton-engine
+    shm_size: "2gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./models:/models
+    command: ["tritonserver", "--model-repository=/models"]
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+      - "8002:8002"
+    depends_on:
+      model-setup:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v2/health/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # -----------------------------------------------------------------------
+  # Lama-Triton FastAPI Gateway (API 接口)
+  # -----------------------------------------------------------------------
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    container_name: lama-triton-gateway
+    environment:
+      - TRITON_URL=triton-engine:8001
+      - TRITON_MODEL_NAME=lama_pytorch
+    ports:
+      - "8090:8080"
+    depends_on:
+      triton-engine:
+        condition: service_healthy
+    restart: unless-stopped
