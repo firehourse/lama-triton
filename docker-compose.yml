@@ -23,7 +23,10 @@ services:
   # NVIDIA Triton Inference Server (推理引擎)
   # -----------------------------------------------------------------------
   triton-engine:
-    image: nvcr.io/nvidia/tritonserver:24.08-py3
+    build:
+      context: .
+      dockerfile: Dockerfile.triton
+    image: lama-triton-engine:latest
     container_name: lama-triton-engine
     shm_size: "2gb"
     deploy:
@@ -35,7 +38,13 @@ services:
               capabilities: [gpu]
     volumes:
       - ./models:/models
-    command: ["tritonserver", "--model-repository=/models"]
+      # C++ backend .so is already baked into the image via Dockerfile.triton
+    command: [
+      "tritonserver",
+      "--model-repository=/models",
+      "--backend-directory=/opt/tritonserver/backends",
+      "--strict-readiness=false"
+    ]
     ports:
       - "8000:8000"
       - "8001:8001"
@@ -60,10 +69,13 @@ services:
     container_name: lama-triton-gateway
     environment:
       - TRITON_URL=triton-engine:8001
-      - TRITON_MODEL_NAME=lama_pytorch
+      - TRITON_MODEL_NAME=lama_ensemble  # v2: C++ preprocessing ensemble
+      - USE_ENSEMBLE=true                # Set to false to fall back to Python preprocess
     ports:
       - "8090:8080"
     depends_on:
       triton-engine:
         condition: service_healthy
     restart: unless-stopped
+    cap_add:
+      - SYS_PTRACE

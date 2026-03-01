@@ -1,0 +1,43 @@
+# Multi-Stage Build: Compile C++ backend INSIDE the Triton container
+# This ensures the .so links against the SAME OpenCV version as the runtime.
+#
+# Stage 1: Build the C++ preprocessing backend
+FROM nvcr.io/nvidia/tritonserver:24.08-py3 AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libopencv-dev \
+    cmake \
+    build-essential \
+    git \
+    rapidjson-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace/lama-triton
+
+# Copy the source tree (only what the build needs)
+COPY third_party/backend      third_party/backend/
+COPY third_party/common       third_party/common/
+COPY third_party/core         third_party/core/
+COPY triton_backends/image_processing triton_backends/image_processing/
+
+# Build (always start with a fresh build dir to avoid host CMakeCache conflicts)
+RUN rm -rf triton_backends/image_processing/build && \
+    mkdir -p triton_backends/image_processing/build && \
+    cd triton_backends/image_processing/build && \
+    cmake .. && \
+    make -j$(nproc)
+
+# -------------------------------------------------------------------
+# Stage 2: Runtime image (only contains what Triton needs)
+FROM nvcr.io/nvidia/tritonserver:24.08-py3
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libopencv-imgcodecs-dev \
+    libopencv-imgproc-dev \
+    libopencv-core-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the backend .so built in Stage 1 into the backend directory
+COPY --from=builder \
+    /workspace/lama-triton/triton_backends/image_processing/build/lib/triton_image_preprocessor.so \
+    /opt/tritonserver/backends/image_preprocessor/libtriton_image_preprocessor.so

@@ -1,0 +1,74 @@
+name: "lama_ensemble"
+platform: "ensemble"
+max_batch_size: 0
+
+input [
+  {
+    name: "IMAGE_RAW"
+    data_type: TYPE_STRING
+    dims: [ 1 ]
+  },
+  {
+    name: "MASK_RAW"
+    data_type: TYPE_STRING
+    dims: [ 1 ]
+  }
+]
+
+output [
+  {
+    name: "OUTPUT_IMAGE"
+    data_type: TYPE_FP32
+    dims: [ 3, -1, -1 ]
+  },
+  {
+    name: "ORIGINAL_SHAPE"
+    data_type: TYPE_INT32
+    dims: [ 2 ]
+  }
+]
+
+ensemble_scheduling {
+  step [
+    {
+      model_name: "image_preprocessor"
+      model_version: -1
+      input_map {
+        key: "IMAGE_RAW"
+        value: "IMAGE_RAW"
+      }
+      input_map {
+        key: "MASK_RAW"
+        value: "MASK_RAW"
+      }
+      output_map {
+        key: "IMAGE_TENSOR"
+        value: "preprocessed_image"
+      }
+      output_map {
+        key: "MASK_TENSOR"
+        value: "preprocessed_mask"
+      }
+      output_map {
+        key: "ORIGINAL_SHAPE"
+        value: "ORIGINAL_SHAPE"
+      }
+    },
+    {
+      model_name: "lama_pytorch"
+      model_version: -1
+      input_map {
+        key: "image"
+        value: "preprocessed_image"
+      }
+      input_map {
+        key: "mask"
+        value: "preprocessed_mask"
+      }
+      output_map {
+        key: "output"
+        value: "OUTPUT_IMAGE"
+      }
+    }
+  ]
+}

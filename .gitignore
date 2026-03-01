@@ -45,3 +45,7 @@ weights/
 
 # Env
 .env
+
+# Notes
+notes/troubleshooting_v2.md
+triton_backends/image_processing/.cache/
