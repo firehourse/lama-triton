@@ -17,21 +17,26 @@ graph TD
         TB[image-toolbox]
     end
 
-    subgraph "Inference Server"
-        subgraph "API Gateway Node"
+    subgraph "Inference Server (Triton)"
+        subgraph "Go Gateway (Gin)"
             API[Standard API Endpoint]
             PREAPI[Preprocessed Endpoint]
-            Pre[Pre-processing Engine]
         end
 
-        subgraph "Accelerated Inference Backend"
-            Batcher[Dynamic Batch Allocator]
-            Instance1[LaMa PyTorch Instance]
+        subgraph "Triton Ensemble Engine"
+            subgraph "Preprocessing Backend (C++)"
+                Pre[OpenCV-based Preproc]
+            end
+            
+            subgraph "Inference Backend (PyTorch/TRT)"
+                Batcher[Dynamic Batch Allocator]
+                Instance1[LaMa Model Instance]
+            end
         end
 
-        API --> Pre
+        API -->|Raw Bytes| Pre
         PREAPI -->|Direct Tensors| Batcher
-        Pre -->|Shared Context| Batcher
+        Pre -->|Processed Tensors| Batcher
         Batcher --> Instance1
     end
 
@@ -40,16 +45,14 @@ graph TD
 
 ## 3. 核心組件設計 (Component Details)
 
-### 3.1 Gateway Node
-*   **異步處理 (Async I/O)**: 在 Gateway 層級將同步的矩陣運算與 I/O 阻塞呼叫分派至背景線程池，確保主 Event Loop 穩定運行。
-*   **連線感知機制**: 實時探測 TCP/HTTP 連線狀態，及時終止已離線客戶端的請求處理，釋放高價值的 GPU 算力。
-*   **端點分流設計**: 
-    * 提供標準接入點處理全流程解碼與運算。
-    * 提供進階接入點接收預先序列化的 Tensor bytes，實現微服務間的零拷貝 (Zero-Copy) 概念，極致降低 Gateway 的 CPU 負擔。
+### 3.1 Go Gateway (Gin)
+*   **高效能 I/O (High-Perf I/O)**: 使用 Go 原生協程 (Goroutine) 處理極高併發，消除 Python GIL 導致的 Context Switch 開銷。
+*   **零處理原則 (Zero-Processing)**: Gateway 不再進行影像解碼或矩陣運算，僅負責協議轉換 (HTTP to gRPC) 與連線生命週期管理。
+*   **低記憶體足跡**: 相較於 FastAPI/Pydantic，Go 版本可顯著降低 Base64 解析與 JSON 序列化時的記憶體分配。
 
-### 3.2 Accelerated Inference Backend
-*   **模型後端直通**: 避免複雜的模型計算圖在轉換過程中失真（如動態控制流遺失），原生支援多引擎加載。
-*   **Dynamic Batching**: 於 C++ 核心層實作動態張量合併，使零散的併發請求能在微秒級預值內合併為最優矩陣大小進行推論。
+### 3.2 Triton C++ Preprocessing Backend
+*   **硬體級加速**: 利用 C++ 與 OpenCV 直接處理影像解碼、Padding (Mod 8) 與 Normalization，避免 Python 與 C++ 之間的資料頻繁複製。
+*   **Ensemble Pipeline**: 透過 Triton Ensemble 模型，將預處理與推理串接為單一原子操作 (Atomic Operation)，極大化流水線效率。
 
 ## 4. 效能對比與優勢總結
 
@@ -67,15 +70,15 @@ graph TD
 
 ```text
 /
-├── gateway/                 # 負責網路銜接與前處理
-│   ├── app/
-│   │   ├── main.py          # API 排程
-│   │   └── core/            # 核心邏輯
-├── models/                  # 推理引擎庫
-│   └── backend_model/
-│       ├── config.yaml      # 配置檔
-│       └── weights/         # 模型權重
-└── deployment/              # 容器編排
+├── gateway-go/              # Go 實作的高效能 Gateway
+│   ├── main.go              # Gin 路由與 Triton gRPC Client
+│   └── schemas/             # API Schema 定義
+├── triton_backends/         # 自定義 C++ Backends
+│   └── image_processing/    # OpenCV-based 預處理
+├── models/                  # Triton 模型倉庫 (Ensemble + PyTorch)
+│   ├── lama_ensemble/       # 組合模型
+│   └── lama_pytorch/        # 核心推理權重
+└── deployment/              # Docker Compose 與容器配置
 ```
 
 ## 6. 資源配置策略 (Resource Strategy)
